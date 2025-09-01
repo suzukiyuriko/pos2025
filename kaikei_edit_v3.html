@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>かんたん会計（文化祭版・スタティック改良）</title>
+  <style>
+    :root {
+      --bg: #f7f7fb;
+      --card: #ffffff;
+      --text: #222;
+      --muted: #666;
+      --accent: #3b82f6;
+      --danger: #ef4444;
+      --ok: #16a34a;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: system-ui, sans-serif; background: var(--bg); color: var(--text); }
+    .container { max-width: 1100px; margin: 0 auto; padding: 16px; display: grid; gap: 16px; grid-template-columns: 1.2fr 1fr; }
+    header { grid-column: 1 / -1; display: flex; justify-content: space-between; align-items: center; }
+    h1 { font-size: 22px; margin: 0; }
+    .card { background: var(--card); border-radius: 16px; box-shadow: 0 6px 20px rgba(0,0,0,.06); padding: 16px; }
+    .group { display: flex; gap: 12px; margin-bottom: 12px; }
+    .btn { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; border-radius: 12px;
+           padding: 20px; font-weight: 700; font-size: 20px; cursor: pointer; background: #eef2ff; user-select: none;
+           height: 100px; }
+    .btn .price { font-size: 16px; font-weight: 600; color: var(--muted); }
+    .btn.smallFont { font-size: 18px; }
+    .right { display: grid; gap: 16px; grid-template-rows: auto 1fr auto; }
+    .list { max-height: 300px; overflow: auto; font-size: 14px; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { padding: 6px 8px; text-align: left; font-size: 14px; }
+    thead th { position: sticky; top: 0; background: #f0f3ff; }
+    tbody tr:nth-child(odd) { background: #fafbff; }
+    .total { font-size: 24px; font-weight: 900; }
+    input[type="number"], input[type="text"] { width: 100%; padding: 8px 10px; border-radius: 8px; border: 1px solid #ccc; font-size: 16px; }
+    .actions { display: flex; gap: 10px; flex-wrap: wrap; }
+    .actionBtn { padding: 10px 14px; border-radius: 8px; border: 0; cursor: pointer; font-weight: 700; }
+    .primary { background: var(--accent); color: #fff; }
+    .danger { background: #e0f2ff; color: #000; }
+    .ok { background: var(--ok); color: #fff; font-size: 18px; padding: 16px 24px; }
+    .muted { background: #e5e7eb; }
+    .small { font-size: 12px; color: var(--muted); }
+    .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    @media (max-width: 900px) { .container { grid-template-columns: 1fr; } .group { flex-direction: column; } }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>かんたん会計（文化祭版・スタティック改良）</h1>
+      <div class="actions">
+        <button class="actionBtn ok" id="downloadCsv">CSVダウンロード</button>
+      </div>
+    </header>
+
+    <!-- 左側 商品ボタン -->
+    <section class="card" id="items"></section>
+
+    <!-- 右側 会計エリア -->
+    <section class="right">
+      <div class="card list">
+        <table>
+          <thead>
+            <tr>
+              <th>品名</th><th>単価</th><th>数量</th><th>小計</th>
+            </tr>
+          </thead>
+          <tbody id="cartBody"></tbody>
+        </table>
+      </div>
+      <div class="card">
+        <div class="total">合計：<span id="grandTotal">¥0</span></div>
+        <div class="grid2" style="margin-top:10px">
+          <div><label class="small">いただいた金額</label><input type="number" id="paidInput" inputmode="numeric" placeholder="0"></div>
+          <div><label class="small">お釣り</label><input type="text" id="changeOut" readonly></div>
+        </div>
+      </div>
+      <div class="card">
+        <button class="actionBtn ok" id="checkoutBtn">会計 確定</button>
+      </div>
+    </section>
+  </div>
+
+  <script>
+    const itemsData = {
+      BR: {id:'BR', name:'ベリールージュ', price:160, small:true},
+      LB: {id:'LB', name:'ラグーンブルー', price:160, small:true},
+      RB: {id:'RB', name:'レインボー', price:270},
+      CC: {id:'CC', name:'クッキー＆クリーム', price:270},
+      HC: {id:'HC', name:'ハニーコットン', price:270, small:true},
+      CH: {id:'CH', name:'チュロス', price:220},
+      KA: {id:'KA', name:'唐揚げ', price:120}
+    };
+    const itemGroups = [
+      ['BR','LB'],
+      ['RB','CC','HC'],
+      ['CH','KA']
+    ];
+
+    let cart = [];
+    function yen(n){ return '¥' + n.toLocaleString('ja-JP'); }
+    function renderItems(){
+      const wrap=document.getElementById('items');
+      wrap.innerHTML='';
+      itemGroups.forEach(groupIds=>{
+        const group=document.createElement('div');
+        group.className='group';
+        groupIds.forEach(id=>{
+          const it=itemsData[id];
+          const btn=document.createElement('button');
+          btn.className='btn'+(it.small?' smallFont':'');
+          btn.innerHTML=`<div>${it.name}</div><div class="price">${yen(it.price)}</div>`;
+          btn.onclick=()=>addToCart(it);
+          group.appendChild(btn);
+        });
+        wrap.appendChild(group);
+      });
+    }
+    function addToCart(it){
+      const row=cart.find(r=>r.id===it.id);
+      if(row) row.qty++;
+      else cart.push({...it, qty:1});
+      renderCart();
+    }
+    function computeTotal(){return cart.reduce((s,r)=>s+r.price*r.qty,0);}
+
+    function renderCart(){
+      const body=document.getElementById('cartBody'); 
+      body.innerHTML='';
+      cart.forEach((r,index)=>{
+        const tr=document.createElement('tr');
+        tr.innerHTML=`
+          <td>${r.name}</td>
+          <td>${yen(r.price)}</td>
+          <td><input type="number" min="0" value="${r.qty}" data-index="${index}" class="qtyInput" style="width:60px"></td>
+          <td>${yen(r.price*r.qty)}</td>
+          <td><button class="actionBtn danger small deleteBtn" data-index="${index}">削除</button></td>
+        `;
+        body.appendChild(tr);
+      });
+
+      // 数量変更イベント
+      body.querySelectorAll('.qtyInput').forEach(input=>{
+        input.addEventListener('input',(e)=>{
+          const idx=e.target.dataset.index;
+          const val=parseInt(e.target.value||'0',10);
+          if(val<=0){ 
+            cart.splice(idx,1); // 0以下なら削除
+          } else {
+            cart[idx].qty=val;
+          }
+          renderCart();
+        });
+      });
+
+      // 削除ボタンイベント
+      body.querySelectorAll('.deleteBtn').forEach(btn=>{
+        btn.addEventListener('click',(e)=>{
+          const idx=e.target.dataset.index;
+          cart.splice(idx,1);
+          renderCart();
+        });
+      });
+
+      document.getElementById('grandTotal').textContent=yen(computeTotal());
+      updateChange();
+    }
+
+    const paidInput=document.getElementById('paidInput');
+    const changeOut=document.getElementById('changeOut');
+    paidInput.addEventListener('input',updateChange);
+    function updateChange(){
+      const paid=parseInt(paidInput.value||'0',10);
+      const change=paid-computeTotal();
+      changeOut.value= change>=0 ? yen(change) : '不足:'+yen(-change);
+    }
+    document.getElementById('checkoutBtn').addEventListener('click',()=>{
+      if(cart.length===0) return alert('カートが空です');
+      const paid=parseInt(paidInput.value||'0',10);
+      const total=computeTotal();
+      if(paid<total) return alert('お支払いが不足しています');
+      const journal=JSON.parse(localStorage.getItem('journal')||'[]');
+      journal.push({
+        ts:new Date().toISOString(),
+        lines:cart.map(r=>({id:r.id,name:r.name,price:r.price,qty:r.qty,subtotal:r.price*r.qty})),
+        total,paid,change:paid-total
+      });
+      localStorage.setItem('journal',JSON.stringify(journal));
+      cart=[]; renderCart(); paidInput.value=''; updateChange();
+      alert('会計を記録しました');
+    });
+    document.getElementById('downloadCsv').addEventListener('click',()=>{
+      const journal=JSON.parse(localStorage.getItem('journal')||'[]');
+      if(journal.length===0) return alert('データがありません');
+      let csv='Timestamp,ItemId,ItemName,Price,Qty,Subtotal,Total,Paid,Change\n';
+      journal.forEach(j=>{
+        j.lines.forEach(r=>{
+          csv+=`${j.ts},${r.id},${r.name},${r.price},${r.qty},${r.subtotal},${j.total},${j.paid},${j.change}\n`;
+        });
+      });
+      const blob=new Blob([csv],{type:'text/csv'});
+      const url=URL.createObjectURL(blob);
+      const a=document.createElement('a');
+      a.href=url; a.download='sales.csv'; a.click();
+      URL.revokeObjectURL(url);
+      if(confirm('記録を消去しますか？')) localStorage.removeItem('journal');
+    });
+    renderItems(); renderCart();
+  </script>
+</body>
+</html>
