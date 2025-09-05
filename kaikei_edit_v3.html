@@ -209,6 +209,154 @@
     renderItems(); renderCart();
   </script>
 
+<!-- ▼▼▼ これ1つに置き換え（</body>の直前） ▼▼▼ -->
+https://alcdn.msauth.net/browser/2.38.0/js/msal-browser.min.js</script>
+<script>
+/** ====== あなたの環境設定 ====== **/
+const CLIENT_ID   = "07b8d7ed-60cd-4ae9-b6f2-19951af38ebc";
+const TENANT_ID   = "527dad28-286b-4aed-a521-3464a410694d";
+const REDIRECT_URI = "https://suzukiyuriko.github.io/pos2025/kaikei_edit_v3.html"; // 実URLに合わせる
+const filePath    = "/売上統合.xlsx";   // 例: ルート直下。フォルダ配下なら "/POS/売上統合.xlsx"
+const tableName   = "Transactions";     // Excelのテーブル名（一致必須）
 
+/** ====== 固定設定 ====== **/
+const msalConfig = {
+  auth: {
+    clientId: CLIENT_ID,
+    authority: `https://login.microsoftonline.com/${TENANT_ID}`,
+    redirectUri: REDIRECT_URI,
+    postLogoutRedirectUri: REDIRECT_URI
+  },
+  cache: { cacheLocation: "localStorage", storeAuthStateInCookie: true }
+};
+const loginRequest = { scopes: ["Files.ReadWrite", "openid", "profile", "offline_access"] };
+const graphBase = "https://graph.microsoft.com/v1.0";
+const fileBase  = `${graphBase}/me/drive/root:${filePath}:`;
+
+/** ====== MSAL/Graph 本体 ====== **/
+const msalInstance = new msal.PublicClientApplication(msalConfig);
+async function signIn() {
+  const accts = msalInstance.getAllAccounts();
+  if (accts.length > 0) return accts[0];
+  await msalInstance.loginRedirect(loginRequest);
+}
+async function getToken() {
+  const account = msalInstance.getAllAccounts()[0];
+  try { const res = await msalInstance.acquireTokenSilent({ ...loginRequest, account }); return res.accessToken; }
+  catch { await msalInstance.acquireTokenRedirect(loginRequest); }
+}
+
+let workbookSessionId = null;
+async function ensureWorkbookSession(accessToken) {
+  if (workbookSessionId) return workbookSessionId;
+  const res = await fetch(`${fileBase}/workbook/createSession`, {
+    method: "POST",
+    headers: { "Authorization": `Bearer ${accessToken}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ persistChanges: true })
+  });
+  if (!res.ok) throw new Error(`createSession failed: ${res.status} ${await res.text()}`);
+  const data = await res.json();
+  workbookSessionId = data.id;
+  return workbookSessionId;
+}
+async function appendRow(values /* [時間, コード, 商品名, 価格, 数量, 小計, 合計, 支払い, お釣り] */) {
+  const token = await getToken();
+  const sessionId = await ensureWorkbookSession(token);
+  let res = await fetch(`${fileBase}/workbook/tables/${encodeURIComponent(tableName)}/rows/add`, {
+    method: "POST",
+    headers: { "Authorization": `Bearer ${token}`, "Content-Type": "application/json", "workbook-session-id": sessionId },
+    body: JSON.stringify({ values: [values] })
+  });
+  if (res.status === 429 || res.status >= 500) {
+    await new Promise(r => setTimeout(r, 800));
+    res = await fetch(`${fileBase}/workbook/tables/${encodeURIComponent(tableName)}/rows/add`, {
+      method: "POST",
+      headers: { "Authorization": `Bearer ${token}`, "Content-Type": "application/json", "workbook-session-id": sessionId },
+      body: JSON.stringify({ values: [values] })
+    });
+  }
+  if (!res.ok) {
+    if (workbookSessionId) { // セッション作り直し→再送
+      workbookSessionId = null;
+      const newId = await ensureWorkbookSession(token);
+      const retry = await fetch(`${fileBase}/workbook/tables/${encodeURIComponent(tableName)}/rows/add`, {
+        method: "POST",
+        headers: { "Authorization": `Bearer ${token}`, "Content-Type": "application/json", "workbook-session-id": newId },
+        body: JSON.stringify({ values: [values] })
+      });
+      if (retry.ok) return;
+    }
+    throw new Error(`rows/add failed: ${res.status} ${await res.text()}`);
+  }
+}
+// 他のコードから呼べるように公開
+window.saveTransaction = async function(row){ await signIn(); await appendRow(row); };
+
+/** ====== ここから診断UI（本体と同じブロック内：未初期化を根絶） ====== */
+(function () {
+  function ensurePanel() {
+    let p = document.getElementById("diag-panel");
+    if (p) return p;
+    p = document.createElement("div");
+    p.id = "diag-panel";
+    p.style.cssText = "position:fixed;right:16px;bottom:72px;width:320px;max-height:50vh;overflow:auto;background:#111;color:#0f0;font:12px/1.4 monospace;padding:8px;border-radius:8px;z-index:99999;opacity:0.95;";
+    document.body.appendChild(p);
+    return p;
+  }
+  function log(msg) {
+    const p = ensurePanel();
+    const line = document.createElement("div");
+    line.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+    p.appendChild(line); p.scrollTop = p.scrollHeight;
+  }
+  async function runDiag() {
+    try {
+      log("診断開始");
+      await signIn();
+      const acct = msalInstance.getAllAccounts()[0];
+      log(`サインイン: ${acct?.username || "(不明)"}`);
+      const token = await getToken();
+      log("アクセストークン取得OK");
+
+      let res = await fetch(`${fileBase}`, { headers: { "Authorization": `Bearer ${token}` } });
+      log(`GET file (${filePath}): ${res.status}`);
+      if (!res.ok) { log(await res.text()); log("❌ ファイルパス/アカウント権限を確認してください"); return; }
+
+      res = await fetch(`${fileBase}/workbook/tables`, { headers: { "Authorization": `Bearer ${token}` } });
+      const tables = await res.json();
+      const names = (tables.value || []).map(t => t.name);
+      log(`テーブル一覧: ${JSON.stringify(names)}`);
+      if (!names.includes(tableName)) { log(`❌ テーブル名「${tableName}」が見つかりません`); return; }
+
+      const sessionId = await ensureWorkbookSession(token);
+      log(`セッションOK: ${sessionId.substring(0, 8)}...`);
+
+      const now = new Date().toISOString();
+      const testRow = [now, "DBG", "診断テスト", 1, 1, 1, 1, "現金", 0];
+      res = await fetch(`${fileBase}/workbook/tables/${encodeURIComponent(tableName)}/rows/add`, {
+        method: "POST",
+        headers: { "Authorization": `Bearer ${token}`, "Content-Type": "application/json", "workbook-session-id": sessionId },
+        body: JSON.stringify({ values: [testRow] })
+      });
+      log(`rows/add: ${res.status}`);
+      if (!res.ok) { log(await res.text()); log("❌ rows/add 失敗（エラー文を教えてください）"); return; }
+      log("✅ 追加成功（Excel末尾に「診断テスト」が入るはず）");
+    } catch (e) {
+      log("例外: " + (e?.message || e));
+    }
+  }
+  window.addEventListener("DOMContentLoaded", () => {
+    // 先にサインイン（任意）
+    signIn();
+    // 診断ボタン
+    const btn = document.createElement("button");
+    btn.textContent = "診断";
+    btn.style.cssText = "position:fixed;right:16px;bottom:16px;z-index:99999;padding:10px 14px;border-radius:999px;border:none;background:#0067c0;color:#fff;font-weight:bold;";
+    btn.onclick = runDiag;
+    document.body.appendChild(btn);
+  });
+})();
+</script>
+<!-- ▲▲▲ 置き換えはここまで ▲▲▲ -->
 </body>
 </html>
