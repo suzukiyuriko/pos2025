@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Graph Excel 連携テスト</title>
 
-  <!-- ★ここが「URLの文字列」ではなく、本物の script タグです -->
+  <!-- ★MSALを正しく読み込む（タグの形になっていることが重要） -->
   https://alcdn.msauth.net/browser/2.38.0/js/msal-browser.min.js</script>
 </head>
 <body style="font-family: system-ui, -apple-system, Segoe UI, sans-serif; padding: 24px;">
@@ -16,9 +16,9 @@
   /*** ここだけあなたの環境に合わせてください ***/
   const CLIENT_ID    = "07b8d7ed-60cd-4ae9-b6f2-19951af38ebc";
   const TENANT_ID    = "527dad28-286b-4aed-a521-3464a410694d";
-  /* このページ自身のURLを入れて、Entra > アプリ登録 > 認証 > SPA に同じ文字列を追加 */
+  /* このページ自身のURLを入れて、Entra > アプリ登録 > 認証 > SPA に同じ文字列で追加 */
   const REDIRECT_URI = "https://suzukiyuriko.github.io/pos2025/graph_test.html";
-  /* まずは Table1 でテスト → 通ったら Excel 側のテーブル名に合わせて Transactions 等に変更 */
+  /* まずは Table1 でテスト。通ったら Excel 側の本命名（Transactionsなど）に変更 */
   const tableName    = "Table1";
 
   /* よくあるファイル場所（上から順に試す） */
@@ -42,7 +42,7 @@
   const loginRequest = { scopes: ["Files.ReadWrite", "openid", "profile", "offline_access"] };
   const msalInstance = new msal.PublicClientApplication(msalConfig);
 
-  /*** エラーパネル（何かあれば左下に赤い枠で出します） ***/
+  /*** エラーパネル（左下の赤枠に出します） ***/
   function overlay(text) {
     const d = document.createElement("div");
     d.style.cssText = "position:fixed;left:16px;bottom:16px;z-index:999999;background:#300;color:#fff;padding:10px;border-radius:8px;max-width:90vw;font:12px/1.4 monospace;white-space:pre-wrap;";
