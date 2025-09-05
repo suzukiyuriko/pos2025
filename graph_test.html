@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="ja">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Graph Excel 連携テスト</title>
+
+<!-- MSAL 読み込み（先に必ず一回だけ） -->
+https://alcdn.msauth.net/browser/2.38.0/js/msal-browser.min.js</script>
+
+<body style="font-family: system-ui, sans-serif; padding: 24px;">
+  <h1>Graph Excel 連携テスト</h1>
+  <p>右下のボタンから、OneDrive の「売上統合.xlsx」に1行追加します。</p>
+
+<script>
+/*** ここだけあなたの環境に合わせてください ***/
+const CLIENT_ID    = "07b8d7ed-60cd-4ae9-b6f2-19951af38ebc";
+const TENANT_ID    = "527dad28-286b-4aed-a521-3464a410694d";
+/* このページ自身のURLを入れて、Entra の「認証 > SPA のリダイレクトURI」にも同じ文字列で追加 */
+const REDIRECT_URI = "https://suzukiyuriko.github.io/pos2025/graph_test.html";
+/* Excel のテーブル名：まずは 'Table1' で試し、次に本命 'Transactions' に戻すのがおすすめ */
+const tableName    = "Table1";
+
+/* よくあるファイルの場所（上から順にチェック） */
+const FILE_PATH_CANDIDATES = [
+  "/売上統合.xlsx",             // ルート直下
+  "/Documents/売上統合.xlsx",   // OneDrive 内部名が Documents
+  "/ドキュメント/売上統合.xlsx" // 表示名が日本語
+];
+
+/*** 固定設定（そのままでOK） ***/
+const graphBase = "https://graph.microsoft.com/v1.0";
+const msalConfig = {
+  auth: {
+    clientId: CLIENT_ID,
+    authority: `https://login.microsoftonline.com/${TENANT_ID}`,
+    redirectUri: REDIRECT_URI,
+    postLogoutRedirectUri: REDIRECT_URI
+  },
+  cache: { cacheLocation: "localStorage", storeAuthStateInCookie: true } // iPad/Safari対策
+};
+const loginRequest = { scopes: ["Files.ReadWrite", "openid", "profile", "offline_access"] };
+const msalInstance = new msal.PublicClientApplication(msalConfig);
+
+/*** ここから下は順序どおりに定義（function宣言のみ → 参照順の問題を根絶） ***/
+function onErrorOverlay(text) {
+  const div = document.createElement("div");
+  div.style.cssText = "position:fixed;left:16px;bottom:16px;z-index:999999;background:#300;color:#fff;padding:10px;border-radius:8px;max-width:90vw;font:12px/1.4 monospace;white-space:pre-wrap;";
+  div.textContent = text;
+  document.body.appendChild(div);
+}
+window.addEventListener("error", e => onErrorOverlay("JS Error: " + e.message));
+window.addEventListener("unhandledrejection", e => onErrorOverlay("Promise: " + (e.reason?.message || e.reason)));
+
+function badge(msg) {
+  const b = document.createElement("div");
+  b.textContent = msg;
+  b.style.cssText = "position:fixed;left:16px;top:16px;z-index:99999;background:#0a0;color:#fff;padding:6px 8px;border-radius:6px;font:12px monospace;";
+  document.body.appendChild(b);
+}
+
+async function signIn() {
+  const accts = msalInstance.getAllAccounts();
+  if (accts.length > 0) return accts[0];
+  await msalInstance.loginRedirect(loginRequest); // 初回は遷移→戻る
+}
+
+async function getToken() {
+  const account = msalInstance.getAllAccounts()[0];
+  try {
+    const res = await msalInstance.acquireTokenSilent({ ...loginRequest, account });
+    return res.accessToken;
+  } catch {
+    await msalInstance.acquireTokenRedirect(loginRequest);
+  }
+}
+
+async function pickFileBase(token) {
+  for (var i=0; i<FILE_PATH_CANDIDATES.length; i++) {
+    const p = FILE_PATH_CANDIDATES[i];
+    const r = await fetch(`${graphBase}/me/drive/root:${p}`, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    if (r.ok) return `${graphBase}/me/drive/root:${p}:`; // 見つかった
+  }
+  throw new Error("売上統合.xlsx が見つかりません。まずは OneDrive の“ルート直下”に置いてください。");
+}
+
+async function appendRowSimple(values) {
+  const token = await getToken();
+  const base  = await pickFileBase(token);
+
+  // テーブル一覧を確認（デバッグ用の一言）
+  const rTables = await fetch(`${base}/workbook/tables`, { headers: { Authorization: `Bearer ${token}` } });
+  if (rTables.ok) {
+    const js = await rTables.json();
+    console.log("Tables:", (js.value||[]).map(t => t.name));
+  }
+
+  const res = await fetch(`${base}/workbook/tables/${encodeURIComponent(tableName)}/rows/add`, {
+    method: "POST",
+    headers: { "Authorization": `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ values: [values] })
+  });
+  if (!res.ok) {
+    const t = await res.text();
+    throw new Error(`行追加に失敗: ${res.status}\n${t}`);
+  }
+}
+
+/*** 画面要素（最後に作る） ***/
+document.addEventListener("DOMContentLoaded", async () => {
+  badge("DEBUG: JS running");
+
+  // サインイン状態を表示
+  try {
+    await signIn();
+    const a = msalInstance.getAllAccounts()[0];
+    const info = document.createElement("div");
+    info.textContent = "Signed in: " + (a?.username || "(未)");
+    info.style.cssText = "position:fixed;left:16px;top:44px;background:#036;color:#fff;padding:6px 8px;border-radius:6px;font:12px monospace;z-index:99999";
+    document.body.appendChild(info);
+  } catch {}
+
+  // テストボタン
+  const btn = document.createElement("button");
+  btn.textContent = "（テスト）Excelに1行追加";
+  btn.style.cssText = "position:fixed;right:16px;bottom:16px;z-index:99999;padding:10px 14px;border-radius:999px;border:none;background:#0067c0;color:#fff;font-weight:bold;";
+  btn.onclick = async () => {
+    try {
+      const now = new Date().toISOString();
+      // 列順：時間, コード, 商品名, 価格, 数量, 小計, 合計, 支払い, お釣り
+      const row = [now, "TEST", "テスト商品", 100, 1, 100, 100, "現金", 0];
+      await appendRowSimple(row);
+      alert("✅ 追加しました。Excelの末尾を確認してください。");
+    } catch (e) {
+      alert("❌ 追加できませんでした。\n\n" + (e.message || e));
+      console.error(e);
+    }
+  };
+  document.body.appendChild(btn);
+});
+</script>
+</body>
+</html>
