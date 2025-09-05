@@ -1,35 +1,23 @@
-<!doctype html>                                 <!-- 1 -->
-<html lang="ja">                                <!-- 2 -->
-<head>                                          <!-- 3 -->
-  <meta charset="utf-8">                        <!-- 4 -->
-  <meta name="viewport" content="width=device-width,initial-scale=1"> <!-- 5 -->
-  <title>Graph Excel 連携テスト</title>         <!-- 6 -->
-  https://alcdn.msauth.net/browser/2.38.0/js/msal-browser.min.js</script> <!-- 7 -->
-</head>                                         <!-- 8 -->
-<body>                                          <!-- 9 -->
-  <!-- 以下、あなたのスクリプトやHTMLが続きます -->
 
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Graph Excel 連携テスト</title>
+  https://alcdn.msauth.net/browser/2.38.0/js/msal-browser.min.js</script>
+</head>
 <body style="font-family: system-ui, -apple-system, Segoe UI, sans-serif; padding: 24px;">
   <h1>Graph Excel 連携テスト</h1>
   <p>右下のボタンから、OneDrive の「売上統合.xlsx」に1行追加します。</p>
 
   <script>
-  /*** ここだけあなたの環境に合わせてください ***/
   const CLIENT_ID    = "07b8d7ed-60cd-4ae9-b6f2-19951af38ebc";
   const TENANT_ID    = "527dad28-286b-4aed-a521-3464a410694d";
-  /* このページ自身のURLを入れて、Entra > アプリ登録 > 認証 > SPA に同じ文字列で追加 */
   const REDIRECT_URI = "https://suzukiyuriko.github.io/pos2025/graph_test.html";
-  /* まずは Table1 でテスト。通ったら Excel 側の本命名（Transactionsなど）に変更 */
-  const tableName    = "Table1";
+  const tableName    = "Table1"; // ←通ったらExcel側をTransactionsに改名し、ここも合わせる
+  const FILE_PATH_CANDIDATES = ["/売上統合.xlsx","/Documents/売上統合.xlsx","/ドキュメント/売上統合.xlsx"];
 
-  /* よくあるファイル場所（上から順に試す） */
-  const FILE_PATH_CANDIDATES = [
-    "/売上統合.xlsx",
-    "/Documents/売上統合.xlsx",
-    "/ドキュメント/売上統合.xlsx"
-  ];
-
-  /*** 固定設定（そのままでOK） ***/
   const graphBase = "https://graph.microsoft.com/v1.0";
   const msalConfig = {
     auth: {
@@ -38,85 +26,72 @@
       redirectUri: REDIRECT_URI,
       postLogoutRedirectUri: REDIRECT_URI
     },
-    cache: { cacheLocation: "localStorage", storeAuthStateInCookie: true } // iPad/Safari対策
+    cache: { cacheLocation: "localStorage", storeAuthStateInCookie: true }
   };
   const loginRequest = { scopes: ["Files.ReadWrite", "openid", "profile", "offline_access"] };
   const msalInstance = new msal.PublicClientApplication(msalConfig);
 
-  /*** エラーパネル（左下の赤枠に出します） ***/
-  function overlay(text) {
-    const d = document.createElement("div");
-    d.style.cssText = "position:fixed;left:16px;bottom:16px;z-index:999999;background:#300;color:#fff;padding:10px;border-radius:8px;max-width:90vw;font:12px/1.4 monospace;white-space:pre-wrap;";
-    d.textContent = text;
-    document.body.appendChild(d);
+  function overlay(text){
+    const d=document.createElement("div");
+    d.style.cssText="position:fixed;left:16px;bottom:16px;z-index:999999;background:#300;color:#fff;padding:10px;border-radius:8px;max-width:90vw;font:12px/1.4 monospace;white-space:pre-wrap;";
+    d.textContent=text; document.body.appendChild(d);
   }
-  window.addEventListener("error", e => overlay("JS Error: " + e.message));
-  window.addEventListener("unhandledrejection", e => overlay("Promise: " + (e.reason?.message || e.reason)));
+  window.addEventListener("error",e=>overlay("JS Error: "+e.message));
+  window.addEventListener("unhandledrejection",e=>overlay("Promise: "+(e.reason?.message||e.reason)));
 
-  /*** 認証 ***/
-  async function signIn() {
-    const accts = msalInstance.getAllAccounts();
-    if (accts.length > 0) return accts[0];
-    await msalInstance.loginRedirect(loginRequest); // 初回は遷移→戻る
+  async function signIn(){
+    const accts=msalInstance.getAllAccounts();
+    if(accts.length>0) return accts[0];
+    await msalInstance.loginRedirect(loginRequest);
   }
-  async function getToken() {
-    const account = msalInstance.getAllAccounts()[0];
-    try {
-      const res = await msalInstance.acquireTokenSilent({ ...loginRequest, account });
+  async function getToken(){
+    const account=msalInstance.getAllAccounts()[0];
+    try{
+      const res=await msalInstance.acquireTokenSilent({...loginRequest,account});
       return res.accessToken;
-    } catch {
+    }catch{
       await msalInstance.acquireTokenRedirect(loginRequest);
     }
   }
-
-  /*** OneDrive 上の「売上統合.xlsx」を探す ***/
-  async function pickFileBase(token) {
-    for (const p of FILE_PATH_CANDIDATES) {
-      const r = await fetch(`${graphBase}/me/drive/root:${p}`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      if (r.ok) return `${graphBase}/me/drive/root:${p}:`; // 見つかった
+  async function pickFileBase(token){
+    for(const p of FILE_PATH_CANDIDATES){
+      const r=await fetch(`${graphBase}/me/drive/root:${p}`,{headers:{Authorization:`Bearer ${token}`}}); 
+      if(r.ok) return `${graphBase}/me/drive/root:${p}:`;
     }
     throw new Error("売上統合.xlsx が見つかりません。まずは OneDrive の“ルート直下”に置いてください。");
   }
-
-  /*** 1行追加（シンプル版） ***/
-  async function appendRowSimple(values) {
-    const token = await getToken();
-    const base  = await pickFileBase(token);
-    const res = await fetch(`${base}/workbook/tables/${encodeURIComponent(tableName)}/rows/add`, {
-      method: "POST",
-      headers: { "Authorization": `Bearer ${token}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ values: [values] })
+  async function appendRowSimple(values){
+    const token=await getToken();
+    const base=await pickFileBase(token);
+    const res=await fetch(`${base}/workbook/tables/${encodeURIComponent(tableName)}/rows/add`,{
+      method:"POST",
+      headers:{Authorization:`Bearer ${token}`,"Content-Type":"application/json"},
+      body:JSON.stringify({values:[values]})
     });
-    if (!res.ok) {
-      const t = await res.text();
+    if(!res.ok){
+      const t=await res.text();
       throw new Error(`行追加に失敗: ${res.status}\n${t}`);
     }
   }
 
-  /*** 画面要素（右下ボタン） ***/
-  document.addEventListener("DOMContentLoaded", async () => {
-    // JS動作確認の小バッジ（左上）
-    const b = document.createElement("div");
-    b.textContent = "DEBUG: JS running";
-    b.style.cssText = "position:fixed;left:16px;top:16px;background:#0a0;color:#fff;padding:6px 8px;border-radius:6px;font:12px monospace;z-index:99999";
+  document.addEventListener("DOMContentLoaded",async()=>{
+    const b=document.createElement("div");
+    b.textContent="DEBUG: JS running";
+    b.style.cssText="position:fixed;left:16px;top:16px;background:#0a0;color:#fff;padding:6px 8px;border-radius:6px;font:12px monospace;z-index:99999";
     document.body.appendChild(b);
 
-    // 右下のテストボタン
-    const btn = document.createElement("button");
-    btn.textContent = "（テスト）Excelに1行追加";
-    btn.style.cssText = "position:fixed;right:16px;bottom:16px;z-index:99999;padding:10px 14px;border-radius:999px;border:none;background:#0067c0;color:#fff;font-weight:bold;";
-    btn.onclick = async () => {
-      try {
-        await signIn(); // 初回はサインインに遷移→戻る
-        const now = new Date().toISOString();
-        // 列順：時間, コード, 商品名, 価格, 数量, 小計, 合計, 支払い, お釣り
-        const row = [now, "TEST", "テスト商品", 100, 1, 100, 100, "現金", 0];
+    const btn=document.createElement("button");
+    btn.textContent="（テスト）Excelに1行追加";
+    btn.style.cssText="position:fixed;right:16px;bottom:16px;z-index:99999;padding:10px 14px;border-radius:999px;border:none;background:#0067c0;color:#fff;font-weight:bold;";
+    btn.onclick=async()=>{
+      try{
+        await signIn();
+        const now=new Date().toISOString();
+        const row=[now,"TEST","テスト商品",100,1,100,100,"現金",0];
         await appendRowSimple(row);
         alert("✅ 追加しました。Excelの末尾を確認してください。");
-      } catch (e) {
-        alert("❌ 追加できませんでした。\n\n" + (e.message || e));
+      }catch(e){
+        alert("❌ 追加できませんでした。\n\n"+(e.message||e));
         console.error(e);
       }
     };
